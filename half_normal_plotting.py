@@ -40,7 +40,7 @@ class HalfNormPlot:
         self.half_norm_data = self.half_norm_data.sort_values(by=self.abs_col)
             
         #calculate Ri
-        self.half_norm_data['r_i'] = np.array(range(1,data.shape[0]+1))
+        self.half_norm_data['r_i'] = self.half_norm_data[self.abs_col].rank()
         
         #calcualte Ri*
         self.half_norm_data['r_i*'] = (self.half_norm_data['r_i'] - .5) /data.shape[0]
@@ -134,10 +134,13 @@ class HalfNormPlot:
         Function that returns rough estimate of sigma using the data point
         that is closest to one
         """
-        dist_from_one = [abs(x-1) for x in self.half_norm_data[self.abs_col]]
+        #get distance from v_i and 1
+        dist_from_one = [abs(x-1) for x in self.half_norm_data['v_i']]
+        
+        #get the minimum of distance to one
         min_dist = min(dist_from_one)
         loc = dist_from_one.index(min_dist)
-        return self.half_norm_data.loc[loc, self.abs_col]
+        return self.half_norm_data[self.abs_col].iloc[loc]
     
     def sigma_from_regression(self):
         """
@@ -151,7 +154,7 @@ class HalfNormPlot:
 
         
 
-            
+"""
 #read in table 4.1 from "Analysis of Messy Data Volume 2"
 data = pd.read_csv('C:/Users/aburtnerabt/Documents/K-State/Experimental Design/table_4.1.csv')
 
@@ -188,3 +191,7 @@ np.array(range(1,test.shape[0]+1))
 half_norm = HalfNormPlot(test)
 half_norm = HalfNormPlot(test.tolist())
 norm.pdf(test)
+"""
+
+if __name__ == "__main__":
+    pass
