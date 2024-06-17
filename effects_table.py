@@ -1,0 +1,235 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jun 11 15:37:16 2024
+
+@author: aburtnerabt
+"""
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from itertools import combinations
+
+def yates_step(data:list):
+    """
+    creates a list of equal length input list by first addign successive pairs
+    and then subtracting sucessive pairs
+    """
+    #generate successive pair sums
+    sums = [data[x]+data[x+1] for x in range(0,len(data),2)]
+    
+    #generate successive differences
+    diffs = [data[x+1]-data[x] for x in range(0,len(data),2)]
+    
+    #extend sums
+    sums.extend(diffs)
+    return sums
+
+def generate_standard_table(n, columns):
+    """
+    Generates standard format table for 2^n factorial experiment laid
+    out in standard form
+    """
+    #get length of data frame
+    length = 2**n
+    
+    #for every power of two, create binary arrays
+    arrays = []
+    for i in range(n):
+        
+        #instantiate empty factor list
+        factor_levels = []
+        
+        #while factor level less than 2**n
+        while len(factor_levels) < length:
+            
+            #append 2**i 0s
+            for j in range(2**i):
+                factor_levels.append(0)
+            
+            #append 2**i 1s
+            for j in range(2**i):
+                factor_levels.append(1)
+        #add factor levels to arrays
+        arrays.append(factor_levels)
+    arrays = np.array(arrays).T
+    table = pd.DataFrame(data=arrays, columns=columns)
+    return table
+
+class Experiment2N:
+    """
+    Class to represent non-replicated 2^n experiments.  Intended work flow is
+    as follows:
+        1) Generate the standard format table
+        2) Capture results in the standard format table and then feed 
+            that table back into the "calculate_effects" method. Ensure that
+            only main factor columns are in the results dataframe fed back into
+            this method or index issues will happen
+            
+    For a half normal plot use the HalfNormPlot class
+    """
+    def __init__(self, 
+                 factors,
+                 block_size=0):
+        self.n = len(factors)
+        self.factors = factors
+        self.block_size = block_size
+        
+        if block_size == 0:
+            self.num_blocks = 1
+        else:
+            self.num_blocks = 2**(self.n) / self.block_size
+        self.num_test_runs = 2**(self.n)
+        
+        return
+    
+    def generate_table(self, generate_contrast=True):
+        """
+        Generates standard format table for 2^n factorial experiment laid
+        out in standard form
+        """
+
+        #for every power of two, create binary arrays
+        arrays = []
+        for i in range(self.n):
+            
+            #instantiate empty factor list
+            factor_levels = []
+            
+            #while factor level less than 2**n
+            while len(factor_levels) < self.num_test_runs:
+                
+                #append 2**i 0s
+                for j in range(2**i):
+                    factor_levels.append(0)
+                
+                #append 2**i 1s
+                for j in range(2**i):
+                    factor_levels.append(1)
+            #add factor levels to arrays
+            arrays.append(factor_levels)
+        arrays = np.array(arrays).T
+        self.table = pd.DataFrame(data=arrays, columns=self.factors)
+        
+        #if you don't want to see contrast columns return just the table
+        if generate_contrast == False:
+            return self.table.copy()
+            
+        
+        #make table of -1/+1 to calculate contrasts
+        self.contrast_table = self.table.copy()
+        for col in self.contrast_table.columns:
+            self.contrast_table[col] = self.contrast_table[col].map({0:-1, 1:1})
+        
+        #add contrast columns
+        self.contrast_columns = []
+        
+        #generate all possible combos of factors
+        for i in range(1, self.n+1):
+            self.contrast_columns.extend(list(combinations(self.factors,i)))
+            
+        #for each combination calculate column and make it
+        for col in self.contrast_columns:
+            col_name = ''.join([x for x in col])
+            self.table[f"{col_name}_contrast"] = self.contrast_table[[x for x in col]].prod(axis=1)
+        return self.table.copy()
+    
+    def calculate_effects(self, results: pd.DataFrame, response_col: str):
+        """
+        Function that calculates the main and interaction effects
+        of the 2n experiment.  This does NOT calculate block effects and 
+        assumes there is one complete replication.  
+        
+        The data frame MUST HAVE the factors in the same column order as the
+        class experiment table, the columns should be 0/1 encoded for high-low
+        treatment, and the table should be in standard order.
+        
+        The ONLY columns that should be in the results df are the factors,
+        any contrast columns should be dropped out.  The results df gets
+        joined to the existing experiment table using factors as join keys,
+        any column outside of the factors such as "a_contrast" will cause
+        indexing issues.
+        """
+        #set index of results to the factor columns
+        results = results.set_index(self.factors)
+        
+        #create results table by merge on factor column index
+        self.effects_table = self.table.copy().set_index(self.factors)
+        self.effects_table = self.effects_table.merge(results, 
+                                                       how='left', 
+                                                       left_index=True, 
+                                                       right_index=True)
+        
+        #reset the index
+        self.effects_table = self.effects_table.reset_index()
+        
+        #make dataframe holder for calculations
+        self.calculated_effects = pd.DataFrame(data=np.zeros((2,len(self.contrast_columns))),
+                                               columns=[f"{''.join(x)}_effect" for x in self.contrast_columns],
+                                               index=['effect','std_effect'])
+        
+        #calculate each interaction effect and make
+        for col in self.contrast_columns:
+            col_name = ''.join(col)
+            con_col = f"{col_name}_contrast"
+            effect_col = f"{col_name}_effect"
+            effect = sum([x*y for x,y in zip(self.effects_table[con_col],
+                                             results[response_col])])
+            self.calculated_effects.at['effect',effect_col] = effect
+            self.calculated_effects.at['std_effect',effect_col] = effect / (len(
+                self.effects_table[con_col])**.5)
+            
+        return self.calculated_effects.copy()
+            
+"""      
+exp.effects_table.loc[:,'a_contrast']   
+np.zeros(5)
+
+exp = Experiment2N(['a','b','c',])
+exp_table = exp.generate_table()    
+exp_table['y'] = [60, 72, 54, 68, 52, 83, 45, 80]
+exp_table = exp_table[['a','b','c', 'y']]
+effects = exp.calculate_effects(exp_table, 'y')
+[''.join(x) for x in exp.contrast_columns]
+    
+
+generate_standard_table(3, ['A','B','C'])
+
+step_1 = yates_step(data['Mold Temperature'].tolist())
+step_2 = yates_step(step_1)
+step_3 = yates_step(step_2)
+[x/8 if x == step_3[0] else x/4 for x in step_3]
+[x / 8**.5 for x in step_3]
+
+
+data = [71, 61, 90, 82, 68, 61, 87, 80, 61, 50, 89, 83, 59, 51, 85, 78]
+step1 = yates_step(data)
+step2 = yates_step(step1)
+step3 = yates_step(step2)
+step4 = yates_step(step3)
+result = [x / 4 for x in step4]
+"""
+if __name__ == "__main__":
+    pass
+'''
+test_data = generate_standard_table(3, ['a','b','c'])
+for col in test_data.columns:
+    test_data[col] = test_data[col].map({0:-1, 1:1})
+
+factors = ['a','b','c']
+all_combos = []
+for i in range(1, len(factors)+1):
+    all_combos.extend(list(combinations(factors,i)))
+
+test_data[[x for x in all_combos[-1]]].prod(axis=1)
+
+test_data['y'] = exp_table.y.values
+test_data2 = test_data.copy().drop('y', axis=1)
+
+test_data = test_data.set_index(['a','b','c'])
+test_data2 = test_data2.set_index(['a','b','c'])
+
+test_data.merge(test_data2, how='left', left_index=True, right_index=True).reset_index()
+
+test_data  = test_data.reset_index()
+test_data.loc[:,'a']*test_data.loc[:,'b']
+'''
