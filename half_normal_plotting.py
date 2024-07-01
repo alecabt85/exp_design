@@ -35,8 +35,14 @@ class HalfNormPlot:
         self.label_col = label_col
         self.abs_col = f"abs_{data_col}"
         
+        #create half norm data
+        self.create_half_norm_data()
+        
+        return
+    
+    def create_half_norm_data(self):
         #get abs value and sort
-        self.half_norm_data[self.abs_col] = self.half_norm_data[data_col].apply(lambda x: abs(x))
+        self.half_norm_data[self.abs_col] = self.half_norm_data[self.data_col].apply(lambda x: abs(x))
         self.half_norm_data = self.half_norm_data.sort_values(by=self.abs_col)
         self.half_norm_data.reset_index(drop=True, inplace=True)
             
@@ -44,20 +50,47 @@ class HalfNormPlot:
         self.half_norm_data['r_i'] = self.half_norm_data[self.abs_col].rank(method="first")
         
         #calcualte Ri*
-        self.half_norm_data['r_i*'] = (self.half_norm_data['r_i'] - .5) /data.shape[0]
+        self.half_norm_data['r_i*'] = (self.half_norm_data['r_i'] - .5) /self.half_norm_data.shape[0]
         
         #calculate Pi
         self.half_norm_data['p_i'] = (self.half_norm_data['r_i*'] + 1) / 2
         
         #calculate Vi using
         self.half_norm_data['v_i'] = ndtri(self.half_norm_data['p_i'])
-        
         return
+    
+    def create_adjust_half_norm_data(self, n):
+        """
+        Recalculates the ri, ri*, pi, vi based on the number of poins to 
+        adjust for when discounting significant effects
+        """
+        #make copy of half norm data then cut out significant effects
+        self.half_norm_data_adj = self.half_norm_data.copy()
+        self.half_norm_data_adj = self.half_norm_data_adj.iloc[:-n,:]
+        
+        self.half_norm_data_adj[self.abs_col] = self.half_norm_data_adj[self.data_col].apply(lambda x: abs(x))
+        self.half_norm_data_adj = self.half_norm_data_adj.sort_values(by=self.abs_col)
+        self.half_norm_data_adj.reset_index(drop=True, inplace=True)
+            
+        #calculate Ri
+        self.half_norm_data_adj['r_i'] = self.half_norm_data_adj[self.abs_col].rank(method="first")
+        
+        #calcualte Ri*
+        self.half_norm_data_adj['r_i*'] = (self.half_norm_data_adj['r_i'] - .5) /self.half_norm_data_adj.shape[0]
+        
+        #calculate Pi
+        self.half_norm_data_adj['p_i'] = (self.half_norm_data_adj['r_i*'] + 1) / 2
+        
+        #calculate Vi using
+        self.half_norm_data_adj['v_i'] = ndtri(self.half_norm_data_adj['p_i'])
+        return self.half_norm_data_adj.copy()
+        
     
     def plot_half_norm(self, 
                        title:str, 
                        data_percent=.95,
-                       num_adjust=0):
+                       num_adjust=0,
+                       label_num=0):
         """
         Plots V_i against |X_i| to create the half normal plot
         
@@ -71,12 +104,6 @@ class HalfNormPlot:
         #create figure and axis
         fig, ax = plt.subplots(1,1, figsize=(8,8))
         
-        #scatter plot the data points
-        ax.scatter(self.half_norm_data[self.abs_col], 
-                   self.half_norm_data['v_i'])
-        ax.set_xlabel(self.abs_col)
-        ax.set_ylabel("V_i")
-        ax.set_title(title)
         
         #add line through first 90% of data points for rough identification
         #of outliers
@@ -88,7 +115,12 @@ class HalfNormPlot:
         self.ref_line_data = [0]
         self.ref_line_data.extend(self.half_norm_data[self.abs_col].tolist())
         if num_adjust == 0:
-            
+            #scatter plot the data points
+            ax.scatter(self.half_norm_data[self.abs_col], 
+                       self.half_norm_data['v_i'])
+            ax.set_xlabel(self.abs_col)
+            ax.set_ylabel("V_i")
+            ax.set_title(title)
             #get number of data points to use to fit line
             n = math.floor(data_percent*self.half_norm_data.shape[0])
             
@@ -105,13 +137,30 @@ class HalfNormPlot:
                         in self.ref_line_data]
             ax.plot(self.ref_line_data, ref_line, color='red')
             
-        else:
-            #get number of data points to fit
-            n = self.half_norm_data.shape[0]-num_adjust
             
+            #add labels to plot if option set
+            if label_num > 0:
+                self.label_points = [(x, y) for x, y in 
+                                zip(self.half_norm_data[self.abs_col].iloc[-label_num:],
+                                    self.half_norm_data['v_i'].iloc[-label_num:])]
+                self.labels = self.half_norm_data[self.label_col].iloc[-label_num:]
+                
+                for label, point in zip(self.labels, self.label_points):
+                    text_loc = (point[0], point[1])
+                    ax.annotate(label, point, xytext=text_loc, size=12)
+            
+        else:
+            #create the adjusted half normal plotting data
+            self.create_adjust_half_norm_data(num_adjust)
+            #scatter plot the data points
+            ax.scatter(self.half_norm_data_adj[self.abs_col], 
+                       self.half_norm_data_adj['v_i'])
+            ax.set_xlabel(self.abs_col)
+            ax.set_ylabel("V_i Adjusted")
+            ax.set_title(title)
             #make X and Y arrays
-            self.X = self.half_norm_data[self.abs_col].iloc[:n]
-            y = self.half_norm_data['v_i'].iloc[:n]
+            self.X = self.half_norm_data_adj[self.abs_col]
+            y = self.half_norm_data_adj['v_i']
             
             #create model and fit model
             self.model_adj = sm.OLS(y, self.X, hasconst=False)
@@ -121,17 +170,6 @@ class HalfNormPlot:
             ref_line = [x*self.model_adj_results.params[self.abs_col]  for x 
                         in self.ref_line_data]
             ax.plot(self.ref_line_data, ref_line, color='red')
-            
-            #add labels to plot
-            self.label_points = [(x, y) for x, y in 
-                            zip(self.half_norm_data[self.abs_col].iloc[-num_adjust:],
-                                self.half_norm_data['v_i'].iloc[-num_adjust:])]
-            self.labels = self.half_norm_data[self.label_col].iloc[-num_adjust:]
-            
-            for label, point in zip(self.labels, self.label_points):
-                text_loc = (point[0]*.95, point[1]*1.05)
-                ax.annotate(label, point, xytext=text_loc, size=12)
-        
         return ax
     
     def sigma_closest_to_one(self):

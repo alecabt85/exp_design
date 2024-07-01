@@ -8,6 +8,44 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from itertools import combinations
+from collections import Counter
+
+def get_gen_interaction(effects):
+    all_together = ''.join(effects)
+    counter = Counter(all_together)
+    residual = []
+    for k,v in counter.items():
+        if v % 2 == 1:
+            residual.append(k)
+    residual = sorted(residual)
+    return ''.join(residual)
+
+def get_exp_alias(factors, defining_effects):
+    """
+    Function to get alias sets for a fractional experiment by getting
+    generalized interactions for all factors for defining effects and the 
+    generalized interaction of the defining effect
+    """
+    #get GI of Defining effects and add to list
+    defining_effects = defining_effects.copy()
+    def_eff_gi = get_gen_interaction(defining_effects)
+    defining_effects.append(def_eff_gi)
+    
+    #Build dataframe index as all combinations
+    idx = []
+    for i in range(1,len(factors)+1):
+        idx.extend(combinations(factors,i))
+    
+    #make tuples strings
+    idx = [''.join(x) for x in idx]
+    
+    #iterate over defining effects and factors and determin alias sets
+    #make empty df to hold results
+    alias_sets = pd.DataFrame(columns=defining_effects, index=idx)
+    for col in defining_effects:
+        for row in idx:
+            alias_sets.loc[row,col] = get_gen_interaction([row,col])
+    return alias_sets
 
 def yates_step(data:list):
     """
@@ -54,6 +92,28 @@ def generate_standard_table(n, columns):
     arrays = np.array(arrays).T
     table = pd.DataFrame(data=arrays, columns=columns)
     return table
+
+def encode_effects(table, factors):
+    #create empty list of columns
+    columns = []
+    
+    
+    #make +/-1 encoded version of table
+    ctable = table.copy()
+    
+    for factor in factors:
+        ctable[factor] = ctable[factor].map({0:-1,1:1})
+    
+    #make combinations of factors
+    for i in range(1, len(factors)+1):
+        columns.extend(list(combinations(factors,i)))
+        
+    #calculate contrast columns
+    for col in columns:
+        col_name = f"{''.join(col)} Effect"
+        table[col_name] = ctable[[x for x in col]].prod(axis=1)
+    return table
+        
 
 class Experiment2N:
     """
