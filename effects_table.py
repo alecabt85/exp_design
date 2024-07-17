@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from itertools import combinations
 from collections import Counter
+import string
 
 def get_gen_interaction(effects):
     all_together = ''.join(effects)
@@ -25,11 +26,23 @@ def get_exp_alias(factors, defining_effects):
     Function to get alias sets for a fractional experiment by getting
     generalized interactions for all factors for defining effects and the 
     generalized interaction of the defining effect
+    
+    Inputs
+    factors: list of strings of factors
+    defining_effects: list of strings of defining effects
     """
     #get GI of Defining effects and add to list
     defining_effects = defining_effects.copy()
     def_eff_gi = get_gen_interaction(defining_effects)
-    defining_effects.append(def_eff_gi)
+    if len(defining_effects) >1:
+        combos = []
+        #iterate over all possible combinations and get gen interaction
+        for i in range(1,len(defining_effects)+1):
+            combos.extend([get_gen_interaction(x) for x in combinations(defining_effects,i)])
+    
+    defining_effects.extend(combos)
+    
+    defining_effects = list(set(defining_effects))
     
     #Build dataframe index as all combinations
     idx = []
@@ -38,6 +51,7 @@ def get_exp_alias(factors, defining_effects):
     
     #make tuples strings
     idx = [''.join(x) for x in idx]
+    idx.append('')
     
     #iterate over defining effects and factors and determin alias sets
     #make empty df to hold results
@@ -45,7 +59,48 @@ def get_exp_alias(factors, defining_effects):
     for col in defining_effects:
         for row in idx:
             alias_sets.loc[row,col] = get_gen_interaction([row,col])
+            
+    #make list of tuples
+    alias_tuples = [tuple(sorted(x)) for x in alias_sets.itertuples()]
+    
+    #make unique list of tuples
+    alias_tuples = list(set(alias_tuples))
+    
+    #sort tuples by length
+    alias_tuples = [sorted(x, key=lambda x: len(x)) for x in alias_tuples]
+    
+    #make df
+    alias_sets = pd.DataFrame(data=alias_tuples, columns=[f"alias_{i}" for i in range(1,len(alias_tuples[0])+1)])
+    alias_sets = alias_sets.sort_values(by='alias_1')
     return alias_sets
+
+def get_confounding_effects(defining_effects):
+    """
+    Generates the defining effects of an experiment by multiplying all 
+    combinations of defining effects together
+    """
+    effects = {}
+    for i in range(2,len(defining_effects)+1):
+        pairs = combinations(defining_effects,i)
+        for p in pairs:
+            effects.update({'-'.join(p):get_gen_interaction(p)})
+    return effects
+
+def check_alias(int_ord, alias_sets, defining_effects):
+    """
+    Checks for aliasing of effects up to interaction order "int_ord" by 
+    iterating over the "alias_sets" df and checking to see if any of the aliases
+    are in the defining effects listing, thereby verifying if any effects
+    are aliased with the defining effects
+    """
+    check = []
+    for tup in alias_sets.itertuples():
+        if len(tup.Index)>int_ord or len(tup.Index) < 1:
+            continue
+        check.extend(list(map(lambda x: x in defining_effects, tup)))
+    
+    return any(check)
+        
 
 def yates_step(data:list):
     """
@@ -62,11 +117,13 @@ def yates_step(data:list):
     sums.extend(diffs)
     return sums
 
-def generate_standard_table(n, columns):
+def generate_standard_table(n):
     """
     Generates standard format table for 2^n factorial experiment laid
     out in standard form
     """
+    #make columns
+    columns = [x for x in string.ascii_uppercase[:n]]
     #get length of data frame
     length = 2**n
     
@@ -239,6 +296,69 @@ class Experiment2N:
                 self.effects_table[con_col])**.5)
             
         return self.calculated_effects.copy()
+    
+def generate_standard_table3N(n):
+
+    #make columns
+    columns = [x for x in string.ascii_uppercase[:n]]
+    #get length of data frame
+    length = 3**n
+    
+    #for every power of two, create binary arrays
+    arrays = []
+    for i in range(n):
+        
+        #instantiate empty factor list
+        factor_levels = []
+        
+        #while factor level less than 3**n
+        while len(factor_levels) < length:
+            
+            #append 2**i 0s
+            for j in range(3**i):
+                factor_levels.append(0)
+            
+            #append 2**i 1s
+            for j in range(3**i):
+                factor_levels.append(1)
+                
+            for k in range(3**i):
+                factor_levels.append(2)
+        #add factor levels to arrays
+        arrays.append(factor_levels)
+    arrays = np.array(arrays).T
+    table = pd.DataFrame(data=arrays, columns=columns)
+    
+    #encode contrast columns
+    linear_c = {
+        0:-1,
+        1: 0,
+        2: 1}
+    quad_c = {
+        0: 1,
+        1: -2,
+        2: 1}
+    
+    #for each column create the linear and quadratic contrast
+    for col in columns:
+        table[f"{col}_L"] = table[col].map(linear_c)
+        table[f"{col}_Q"] = table[col].map(quad_c)
+        
+    #get all contrast columns
+    contast_cols = [x for x in table.columns if "_" in x]
+    
+    #get all linear and quadratic columns and make all combinations
+    combos = []
+    for i in range(2, n+1):
+        combos.extend(combinations(contast_cols,i))
+    combo_columns = [" x ".join(x) for x in combos]
+    
+    #zip together combo columns and combos to make columns
+    for col, combo in zip(combo_columns, combos):
+        table[col] = table[[x for x in combo]].product(axis=1)
+    return table
+
+
             
 """      
 exp.effects_table.loc[:,'a_contrast']   
